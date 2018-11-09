@@ -112,9 +112,24 @@ def configure_s3_bucket(region, bucket_name, lambda_function_arn):
                     if lfc['LambdaFunctionArn'] == lambda_function_arn:
                         lambda_already_configured = True
 
+    # Figure out whether the target Lambda actually exists
+    lambda_exists = True
+    try:
+        res =  boto3.client('lambda').get_function(
+            FunctionName=lambda_function_arn)
+    except botocore.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == 'ResourceNotFoundException':
+            lambda_exists = False
+        else:
+            print(e)
+            print("[ERROR] Error trying to obtain info about lambda %s " %
+                      lambda_function_arn)
+
     if lambda_already_configured:
-        print("[INFO] Skiping bucket event configuration. It is already configured to trigger Log Parser Lambda function.")
-    else:
+        print("[INFO] Skipping bucket event configuration. It is already configured to trigger Log Parser Lambda function.")
+    elif lambda_exists:
+        print("[INFO] Attempt to configure bucket %s event configuration for Lambda %s" %
+                  (bucket_name, lambda_function_arn))
         new_conf = {}
         new_conf['LambdaFunctionConfigurations'] = []
         if 'TopicConfigurations' in notification_conf:
