@@ -162,7 +162,7 @@ def remove_s3_bucket_lambda_event(bucket_name, lambda_function_arn):
             new_conf['LambdaFunctionConfigurations'] = []
             for lfc in notification_conf['LambdaFunctionConfigurations']:
                 if lfc['LambdaFunctionArn'] == lambda_function_arn:
-                    print("[INFO] Removing bucket %s event configuration for Lambda %s" % lambda_function_arn)
+                    print("[INFO] Removing bucket %s event configuration for Lambda %s" % (bucket_name, lambda_function_arn))
                     continue #remove all references for Log Parser event
                 else:
                     new_conf['LambdaFunctionConfigurations'].append(lfc)
