@@ -162,6 +162,7 @@ def remove_s3_bucket_lambda_event(bucket_name, lambda_function_arn):
             new_conf['LambdaFunctionConfigurations'] = []
             for lfc in notification_conf['LambdaFunctionConfigurations']:
                 if lfc['LambdaFunctionArn'] == lambda_function_arn:
+                    print("[INFO] Removing bucket %s event configuration for Lambda %s" %
                     continue #remove all references for Log Parser event
                 else:
                     new_conf['LambdaFunctionConfigurations'].append(lfc)
@@ -170,7 +171,7 @@ def remove_s3_bucket_lambda_event(bucket_name, lambda_function_arn):
 
     except Exception, e:
         print(e)
-        print("[ERROR] Error to remove S3 Bucket lambda event")
+        print("[ERROR] Error removing S3 Bucket lambda event")
 
 def get_or_create_rate_based_rule(stack_name, resource_properties):
     rule_id = ""
@@ -481,10 +482,10 @@ def create_stack(stack_name, resource_properties):
     print("[create_stack] End")
 
 def update_stack(stack_name, resource_properties):
-    print("[update_stack] Start")
+    print("[update_stack] %s Start" % stack_name)
     delete_stack(stack_name, resource_properties, False)
     create_stack(stack_name, resource_properties)
-    print("[update_stack] End")
+    print("[update_stack] %s End" % stack_name)
 
 def delete_stack(stack_name, resource_properties, force_delete):
     print("[delete_stack] Start")
@@ -505,10 +506,14 @@ def delete_stack(stack_name, resource_properties, force_delete):
             response = waf.get_web_acl(WebACLId=resource_properties['WAFWebACL'])
 
             for rule in response['WebACL']['Rules']:
+                print("Checking if can delete rule %s of %s type" %
+                          (rule['RuleId'].encode('utf8'),
+                               rule['Type']))
                 rule_id = rule['RuleId'].encode('utf8')
                 rule_type = rule['Type']
                 can_delete, ipsets_to_clean = can_delete_rule(stack_name, resource_properties, rule_id, rule_type, force_delete)
                 if can_delete:
+                    print("Attempt to delete rule")
                     webacl_updates.append({
                         'Action': 'DELETE',
                         'ActivatedRule': {
@@ -523,6 +528,7 @@ def delete_stack(stack_name, resource_properties, force_delete):
                     # Clean IP Sets
                     #----------------------------------------------------------
                     for ip_set_id in ipsets_to_clean:
+                        print("Cleaning up IP set %s" % ip_set_id)
                         clean_ip_set(ip_set_id)
 
         except Exception, e:
