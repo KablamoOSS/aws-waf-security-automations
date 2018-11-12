@@ -29,7 +29,7 @@ BATCH_DELETE_LIMIT = 1000
 RULE_SUFIX_RATE_BASED = " - Http Flood Rule"
 
 waf = None
-log_parser_notification_prefix = 'Call Log Parser for '
+notification_id = None
 
 #======================================================================================================================
 # Auxiliary Functions
@@ -65,12 +65,11 @@ def update_web_acl(web_acl_id, updates):
 #       S3 Cannot have overlapping suffixes in two rules if the prefixes are overlapping for the
 #       same event type.
 #==================================================================================================
-def configure_s3_bucket(region, bucket_name, lambda_function_arn, stack_name):
+def configure_s3_bucket(region, bucket_name, lambda_function_arn):
     #----------------------------------------------------------------------------------------------
     # Check if bucket exists (and inside the specified region)
     #----------------------------------------------------------------------------------------------
     # Create a unique name for the S3 notification ID for Lambda
-    notification_id = log_parser_notification_prefix  + stack_name 
     exists = True
     s3 = boto3.resource('s3')
     s3_client = boto3.client('s3')
@@ -153,8 +152,7 @@ def configure_s3_bucket(region, bucket_name, lambda_function_arn, stack_name):
             Bucket=bucket_name,
             NotificationConfiguration=new_conf)
 
-def remove_s3_bucket_lambda_event(bucket_name, lambda_function_arn,
-                                      stack_name):
+def remove_s3_bucket_lambda_event(bucket_name, lambda_function_arn):
     s3 = boto3.resource('s3')
     s3_client = boto3.client('s3')
     # By default do not try to push a new config unless there is an
@@ -162,7 +160,6 @@ def remove_s3_bucket_lambda_event(bucket_name, lambda_function_arn,
     push_config = False
     print("[INFO] In the remove_s3_bucket_lambda event, push_config is %s" %
               (push_config))
-    notification_id = log_parser_notification_prefix  + stack_name 
     try:
         new_conf = {}
         notification_conf = s3_client.get_bucket_notification_configuration(Bucket=bucket_name)
@@ -359,8 +356,7 @@ def create_stack(stack_name, resource_properties):
     if "AccessLogBucket" in resource_properties:
         configure_s3_bucket(resource_properties['Region'],
             resource_properties['AccessLogBucket'],
-            resource_properties['LambdaWAFLogParserFunction'],
-            stack_name)
+            resource_properties['LambdaWAFLogParserFunction'])
     if "LogDestinationConfigs" in resource_properties:
         configure_logging_configurations(
             waf.get_web_acl(WebACLId=resource_properties['WAFWebACL']).
@@ -546,8 +542,7 @@ def delete_stack(stack_name, resource_properties, force_delete):
     #--------------------------------------------------------------------------
     if "AccessLogBucket" in resource_properties and resource_properties['LambdaWAFLogParserFunction']:
         remove_s3_bucket_lambda_event(resource_properties["AccessLogBucket"],
-            resource_properties['LambdaWAFLogParserFunction'],
-            stack_name)
+            resource_properties['LambdaWAFLogParserFunction'])
     if "LogDestinationConfigs" in resource_properties:
         remove_logging_configurations(
             waf.get_web_acl(WebACLId=resource_properties['WAFWebACL']).
@@ -723,14 +718,17 @@ def send_anonymous_usage_data(action_type, resource_properties):
 # Lambda Entry Point
 #======================================================================================================================
 def lambda_handler(event, context):
+    global nofication_id
     responseStatus = 'SUCCESS'
     responseData = {}
     try:
+        global waf
+        global notification_id
         cf = boto3.client('cloudformation')
         stack_name = event['ResourceProperties']['StackName']
         cf_desc = cf.describe_stacks(StackName=stack_name)
 
-        global waf
+        notification_id = 'Call Log Parser for ' + stack_name 
         if event['ResourceProperties']['LOG_TYPE'] == 'alb':
             session = boto3.session.Session(region_name=event['ResourceProperties']['Region'])
             waf = session.client('waf-regional')
