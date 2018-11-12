@@ -29,6 +29,7 @@ BATCH_DELETE_LIMIT = 1000
 RULE_SUFIX_RATE_BASED = " - Http Flood Rule"
 
 waf = None
+log_parser_notification_prefix = 'Call Log Parser for '
 
 #======================================================================================================================
 # Auxiliary Functions
@@ -64,10 +65,12 @@ def update_web_acl(web_acl_id, updates):
 #       S3 Cannot have overlapping suffixes in two rules if the prefixes are overlapping for the
 #       same event type.
 #==================================================================================================
-def configure_s3_bucket(region, bucket_name, lambda_function_arn):
+def configure_s3_bucket(region, bucket_name, lambda_function_arn, stack_name):
     #----------------------------------------------------------------------------------------------
     # Check if bucket exists (and inside the specified region)
     #----------------------------------------------------------------------------------------------
+    # Create a unique name for the S3 notification ID for Lambda
+    notification_id = log_parser_notification_prefix  + stack_name 
     exists = True
     s3 = boto3.resource('s3')
     s3_client = boto3.client('s3')
@@ -104,7 +107,8 @@ def configure_s3_bucket(region, bucket_name, lambda_function_arn):
     # Configure bucket event to call Log Parser whenever a new gz log file is added to the bucket
     #----------------------------------------------------------------------------------------------
     lambda_already_configured = False
-    notification_conf = s3_client.get_bucket_notification_configuration(Bucket=bucket_name)
+    notification_conf = s3_client.get_bucket_notification_configuration(
+        Bucket=bucket_name)
     if 'LambdaFunctionConfigurations' in notification_conf:
         for lfc in notification_conf['LambdaFunctionConfigurations']:
             for e in lfc['Events']:
@@ -140,16 +144,25 @@ def configure_s3_bucket(region, bucket_name, lambda_function_arn):
             new_conf['LambdaFunctionConfigurations'] = notification_conf['LambdaFunctionConfigurations']
 
         new_conf['LambdaFunctionConfigurations'].append({
-            'Id': 'Call Log Parser',
+            'Id': notification_id,
             'LambdaFunctionArn': lambda_function_arn,
             'Events': ['s3:ObjectCreated:*'],
             'Filter': {'Key': {'FilterRules': [{'Name': 'suffix','Value': 'gz'}]}}
         })
-        response = s3_client.put_bucket_notification_configuration(Bucket=bucket_name, NotificationConfiguration=new_conf)
+        response = s3_client.put_bucket_notification_configuration(
+            Bucket=bucket_name,
+            NotificationConfiguration=new_conf)
 
-def remove_s3_bucket_lambda_event(bucket_name, lambda_function_arn):
+def remove_s3_bucket_lambda_event(bucket_name, lambda_function_arn,
+                                      stack_name):
     s3 = boto3.resource('s3')
     s3_client = boto3.client('s3')
+    # By default do not try to push a new config unless there is an
+    # existing Lambda in it
+    push_config = False
+    print("[INFO] In the remove_s3_bucket_lambda event, push_config is %s" %
+              (push_config))
+    notification_id = log_parser_notification_prefix  + stack_name 
     try:
         new_conf = {}
         notification_conf = s3_client.get_bucket_notification_configuration(Bucket=bucket_name)
@@ -161,17 +174,48 @@ def remove_s3_bucket_lambda_event(bucket_name, lambda_function_arn):
         if 'LambdaFunctionConfigurations' in notification_conf:
             new_conf['LambdaFunctionConfigurations'] = []
             for lfc in notification_conf['LambdaFunctionConfigurations']:
-                if lfc['LambdaFunctionArn'] == lambda_function_arn:
-                    print("[INFO] Removing bucket %s event configuration for Lambda %s" % (bucket_name, lambda_function_arn))
+                if (lfc['LambdaFunctionArn'] == lambda_function_arn or
+                        lfc['Id'] == notification_id):
+                    print("[INFO] Removing bucket %s event configuration for Lambda %s" % (bucket_name, lfc['LambdaFunctionArn']))
+                    push_config = True
                     continue #remove all references for Log Parser event
                 else:
                     new_conf['LambdaFunctionConfigurations'].append(lfc)
 
-        response = s3_client.put_bucket_notification_configuration(Bucket=bucket_name, NotificationConfiguration=new_conf)
+        print("[DEBUG] new_conf is %s "  % new_conf)
+        if push_config:
+            response = s3_client.put_bucket_notification_configuration(
+                Bucket=bucket_name,
+                NotificationConfiguration=new_conf)
+        else:
+            print("[INFO] not performing any config deletion")
 
     except Exception, e:
         print(e)
         print("[ERROR] Error removing S3 Bucket lambda event")
+
+def configure_logging_configurations(web_acl_arn, log_configs):
+    kinesis_arns = log_configs.get('KinesisArns')
+    redacted_fields_type = log_configs.get('RedactedFields',{}).get('Type')
+    redacted_fields_data = log_configs.get('RedactedFields',{}).get('Data')
+    # FIXME: should be coming out of the S3 bucket
+    if redacted_fields_type:
+        redacted_fields = []
+    else:
+        redacted_fields = []
+    client.put_logging_configuration(
+        LoggingConfiguration={
+            'ResourceArn': web_acl_arn,
+            'LogDestinationConfigs': log_configs 
+            })
+
+def remove_logging_configuration(web_acl_arn):
+    try:
+        waf.delete_logging_configuration(ResourceArn=web_acl_arn)
+    except Exception, e:
+        print(e)
+        print("[ERROR] Failed to remove logging configuration for WebACL %s" %
+                  web_acl_arn)
 
 def get_or_create_rate_based_rule(stack_name, resource_properties):
     rule_id = ""
@@ -315,7 +359,13 @@ def create_stack(stack_name, resource_properties):
     if "AccessLogBucket" in resource_properties:
         configure_s3_bucket(resource_properties['Region'],
             resource_properties['AccessLogBucket'],
-            resource_properties['LambdaWAFLogParserFunction'])
+            resource_properties['LambdaWAFLogParserFunction'],
+            stack_name)
+    if "LogDestinationConfigs" in resource_properties:
+        configure_logging_configurations(
+            waf.get_web_acl(WebACLId=resource_properties['WAFWebACL']).
+            get('WebACL').get('WebACLArn'),
+            resource_properties['LogDestinationConfigs'])
 
     #--------------------------------------------------------------------------
     # Get Current Rule List
@@ -496,7 +546,12 @@ def delete_stack(stack_name, resource_properties, force_delete):
     #--------------------------------------------------------------------------
     if "AccessLogBucket" in resource_properties and resource_properties['LambdaWAFLogParserFunction']:
         remove_s3_bucket_lambda_event(resource_properties["AccessLogBucket"],
-            resource_properties['LambdaWAFLogParserFunction'])
+            resource_properties['LambdaWAFLogParserFunction'],
+            stack_name)
+    if "LogDestinationConfigs" in resource_properties:
+        remove_logging_configurations(
+            waf.get_web_acl(WebACLId=resource_properties['WAFWebACL']).
+            get('WebACL').get('WebACLArn'))
 
     #--------------------------------------------------------------------------
     # Create Update List
