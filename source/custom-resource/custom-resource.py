@@ -192,21 +192,24 @@ def remove_s3_bucket_lambda_event(bucket_name, lambda_function_arn):
         print("[ERROR] Error removing S3 Bucket lambda event")
 
 def configure_logging_configurations(web_acl_arn, log_configs):
-    kinesis_arns = log_configs.get('KinesisArns')
-    redacted_fields_type = log_configs.get('RedactedFields',{}).get('Type')
-    redacted_fields_data = log_configs.get('RedactedFields',{}).get('Data')
-    # FIXME: should be coming out of the S3 bucket
-    if redacted_fields_type:
-        redacted_fields = []
-    else:
-        redacted_fields = []
-    client.put_logging_configuration(
-        LoggingConfiguration={
-            'ResourceArn': web_acl_arn,
-            'LogDestinationConfigs': log_configs 
-            })
+    print("[INFO] In the configure_logging_configuration, web_acl_arn is %s" %
+              (web_acl_arn))
+    print("[DEBUG] log_configs are %s" % (log_configs))
+    try:
+        waf.put_logging_configuration(
+            LoggingConfiguration={
+                'ResourceArn': web_acl_arn,
+                'LogDestinationConfigs': log_configs.get('KinesisArns'),
+                'RedactedFields': log_configs.get('RedactedFields',[])
+                })
+    except Exception, e:
+        print(e)
+        print("[ERROR] Failed to add a logging configuration for WebACL %s" %
+                  web_acl_arn)
 
-def remove_logging_configuration(web_acl_arn):
+def remove_logging_configurations(web_acl_arn):
+    print("[INFO] In the remove_logging_configuration, web_acl_arn is %s" %
+              (web_acl_arn))
     try:
         waf.delete_logging_configuration(ResourceArn=web_acl_arn)
     except Exception, e:
@@ -357,20 +360,19 @@ def create_stack(stack_name, resource_properties):
         configure_s3_bucket(resource_properties['Region'],
             resource_properties['AccessLogBucket'],
             resource_properties['LambdaWAFLogParserFunction'])
-    if "LogDestinationConfigs" in resource_properties:
-        configure_logging_configurations(
-            waf.get_web_acl(WebACLId=resource_properties['WAFWebACL']).
-            get('WebACL').get('WebACLArn'),
-            resource_properties['LogDestinationConfigs'])
 
     #--------------------------------------------------------------------------
-    # Get Current Rule List
+    # Get Current Rule List and WebACL ARN
     #--------------------------------------------------------------------------
+    web_acl_arn = None
     current_rules = []
     for attempt in range(API_CALL_NUM_RETRIES):
         try:
             response = waf.get_web_acl(WebACLId=resource_properties['WAFWebACL'])
+            web_acl_arn = response['WebACL']['WebACLArn']
+            print('[DEBUG] response is %s' % response)
             current_rules = [r['RuleId'].encode('utf8') for r in response['WebACL']['Rules']]
+
 
         except Exception, e:
             print(e)
@@ -381,6 +383,11 @@ def create_stack(stack_name, resource_properties):
             break
     else:
         print("[create_stack] Failed ALL attempts to call API")
+
+    if "LogDestinationConfigs" in resource_properties:
+        configure_logging_configurations(
+            web_acl_arn,
+            resource_properties['LogDestinationConfigs'])
 
     #--------------------------------------------------------------------------
     # Update List
@@ -540,13 +547,10 @@ def delete_stack(stack_name, resource_properties, force_delete):
     #--------------------------------------------------------------------------
     # Update S3 Event configuration
     #--------------------------------------------------------------------------
-    if "AccessLogBucket" in resource_properties and resource_properties['LambdaWAFLogParserFunction']:
+    if ("AccessLogBucket" in resource_properties and
+            resource_properties['LambdaWAFLogParserFunction']):
         remove_s3_bucket_lambda_event(resource_properties["AccessLogBucket"],
             resource_properties['LambdaWAFLogParserFunction'])
-    if "LogDestinationConfigs" in resource_properties:
-        remove_logging_configurations(
-            waf.get_web_acl(WebACLId=resource_properties['WAFWebACL']).
-            get('WebACL').get('WebACLArn'))
 
     #--------------------------------------------------------------------------
     # Create Update List
@@ -554,6 +558,10 @@ def delete_stack(stack_name, resource_properties, force_delete):
     for attempt in range(API_CALL_NUM_RETRIES):
         try:
             response = waf.get_web_acl(WebACLId=resource_properties['WAFWebACL'])
+
+            if "LogDestinationConfigs" in resource_properties:
+                web_acl_arn = response['WebACL']['WebACLArn']
+                remove_logging_configurations(web_acl_arn)
 
             for rule in response['WebACL']['Rules']:
                 print("Checking if can delete rule %s of %s type" %
