@@ -34,6 +34,7 @@ Metadata:
           - AccessLogBucket
           - LambdaS3Bucket 
           - LambdaS3Prefix
+          - LogDestinationConfigs
       - Label:
           default: Advanced Settings
         Parameters:
@@ -75,6 +76,9 @@ Metadata:
         default: S3 bucket name where code for all related Lambda is stored
       LambdaS3Prefix:
         default: S3 bucket prefix where code for all related Lambda is stored
+      LogDestinationConfigs:
+        default: JSON structure with the the Kinesis Firehose ARN as the WAF
+          log destination and the redacted fields dict
 Parameters:
   ALBArn:
     Type: String
@@ -183,6 +187,11 @@ Parameters:
     Description: S3 bucket prefix where the code for all related Lambdas
       is stored
     Default: ''
+  LogDestinationConfigs:
+    Type: String
+    Description: JSON structure with the the Kinesis Firehose ARN as the WAF
+      log destination and the redacted fields dict
+    Default: ''
 Conditions:
   ALBArnIsDefined: !Not [ !Equals [ '', !Ref ALBArn ] ] 
   ALBExportedArnIsDefined: !Not [ !Equals [ '', !Ref ALBExportedArn ] ]
@@ -215,6 +224,7 @@ Conditions:
     - !Condition 'ScansProbesProtectionActivated'
     - !Condition 'ReputationListsProtectionActivated'
     - !Condition 'BadBotProtectionActivated'
+  LogDestinationConfigsIsDefined: !Not [ !Equals [ '', !Ref LogDestinationConfigs ] ]
 Resources:
   WAFWhitelistSet:
     Type: AWS::WAFRegional::IPSet
@@ -1048,6 +1058,24 @@ Resources:
                     - ':'
                     - !Ref 'AWS::AccountId'
                     - :ratebasedrule/*
+        - PolicyName: WAFLogging
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - waf-regional:GetLoggingConfiguration
+                  - waf-regional:PutLoggingConfiguration
+                  - waf-regional:DeleteLoggingConfiguration
+                Resource: !Sub 'arn:aws:waf-regional:${AWS::Region}:${AWS::AccountId}:webacl/${WAFWebACL}'
+              - Effect: Allow
+                Action:
+                  - sts:GetCallerIdentity
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - firehose:ListDeliveryStream
+                Resource: '*'
         - PolicyName: CloudFormationAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -1122,6 +1150,10 @@ Resources:
       LambdaWAFReputationListsParserFunction: !If
         - ReputationListsProtectionActivated
         - !GetAtt 'LambdaWAFReputationListsParserFunction.Arn'
+        - !Ref 'AWS::NoValue'
+      LogDestinationConfigs: !If
+        - LogDestinationConfigsIsDefined
+        - !Ref LogDestinationConfigs
         - !Ref 'AWS::NoValue'
       WAFWhitelistSet: !Ref 'WAFWhitelistSet'
       WAFBlacklistSet: !If
