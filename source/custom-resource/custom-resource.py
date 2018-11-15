@@ -385,9 +385,13 @@ def create_stack(stack_name, resource_properties):
         print("[create_stack] Failed ALL attempts to call API")
 
     if "LogDestinationConfigs" in resource_properties:
-        configure_logging_configurations(
-            web_acl_arn,
-            resource_properties['LogDestinationConfigs'])
+        try:
+            # Test if the supplied config string is a valid JSON string
+            log_configs = json.loads(
+                resource_properties['LogDestinationConfigs'])
+        except ValueError as e:
+            log_configs = resource_properties['LogDestinationConfigs']
+        configure_logging_configurations(web_acl_arn, log_configs)
 
     #--------------------------------------------------------------------------
     # Update List
