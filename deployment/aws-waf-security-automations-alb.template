@@ -852,7 +852,7 @@ Resources:
       Role: !GetAtt 'LambdaRoleBadBot.Arn'
       Code:
         S3Bucket: !Ref LambdaS3Bucket
-        S3Key: !Sub "${LambdaS3Prefix}/access-handler.zip"
+        S3Key: !Sub "${LambdaS3Prefix}access-handler.zip"
       Environment:
         Variables:
           IP_SET_ID_BAD_BOT: !Ref 'WAFBadBotSet'
@@ -984,7 +984,7 @@ Resources:
           - !Ref AWS::NoValue
         - !If
           - ReputationListsProtectionActivated
-          - PolicyName: LambdaAccess
+          - PolicyName: LambdaReputationListsInvoke
             PolicyDocument:
               Version: '2012-10-17'
               Statement:
