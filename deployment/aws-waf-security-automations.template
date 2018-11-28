@@ -1,19 +1,19 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: AWS WAF Security Automations v2.1: This AWS CloudFormation
-  template helps you provision the AWS WAF Security Automations stack
-  without worrying about creating and configuring the underlying AWS
-  infrastructure. **WARNING** This template creates an AWS Lambda function,
-  an AWS WAF Web ACL, an Amazon S3 bucket, and an Amazon CloudWatch custom
-  metric. You will be billed for the AWS resources used if you create a stack
-  from this template. **NOTICE** Copyright 2016 Amazon.com, Inc. or its
-  affiliates. All Rights Reserved. Licensed under the Amazon Software
-  License (the License). You may not use this file except in compliance with
-  the License.
-  A copy of the License is located at http://aws.amazon.com/asl/ or in the
-  license file accompanying this file. This file is distributed on an
-  AS IS BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, express or
-  implied. See the License for the specific language governing permissions
-  and limitations under the License.
+Description: AWS WAF Security Automations v2.1:
+  This AWS CloudFormation template helps you provision the AWS WAF Security
+  Automations stack without worrying about creating and configuring the
+  underlying AWS infrastructure. **WARNING** This template creates an AWS
+  Lambda function, an AWS WAF Web ACL, an Amazon S3 bucket, and an Amazon
+  CloudWatch custom metric. You will be billed for the AWS resources used
+  if you create a stack from this template.
+  **NOTICE** Copyright 2016 Amazon.com,
+  Inc. or its affiliates. All Rights Reserved. Licensed under the Amazon
+  Software License (the License). You may not use this file except in
+  compliance with the License. A copy of the License is located at
+  http://aws.amazon.com/asl/ or in the license file accompanying this file.
+  This file is distributed on an AS IS BASIS, WITHOUT WARRANTIES OR CONDITIONS
+  OF ANY KIND, express or implied. See the License for the
+  specific language governing permissions and limitations under the License.
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
@@ -29,7 +29,12 @@ Metadata:
       - Label:
           default: Settings
         Parameters:
+          - ALBArn
+          - ALBExportedArn
           - AccessLogBucket
+          - LambdaS3Bucket 
+          - LambdaS3Prefix
+          - LogDestinationConfigs
       - Label:
           default: Advanced Settings
         Parameters:
@@ -63,6 +68,13 @@ Metadata:
         default: Error Threshold
       WAFBlockPeriod:
         default: WAF Block Period
+      LambdaS3Bucket:
+        default: S3 bucket name where code for all related Lambda is stored
+      LambdaS3Prefix:
+        default: S3 bucket prefix where code for all related Lambda is stored
+      LogDestinationConfigs:
+        default: JSON structure with the the Kinesis Firehose ARN as the WAF
+          log destination and the redacted fields dict
 Parameters:
   SqlInjectionProtectionParam:
     Type: String
@@ -108,8 +120,8 @@ Parameters:
     AllowedValues:
       - 'yes'
       - 'no'
-    Description: Choose yes to enable the component designed to block bad bots and
-      content scrapers.
+    Description: Choose yes to enable the component designed to block bad bots
+      and content scrapers.
   AccessLogBucket:
     Type: String
     Default: ''
@@ -137,8 +149,8 @@ Parameters:
     Description: If you chose yes for the Activate HTTP Flood Protection
       parameter, enter the maximum acceptable requests per FIVE-minute period
       per IP address.
-      Minimum value of 2000. If you chose to deactivate this protection,
-      ignore this parameter.
+      Minimum value of 2000. If you chose to deactivate this protection, ignore
+      this parameter.
   ErrorThreshold:
     Type: Number
     Default: '50'
@@ -154,6 +166,20 @@ Parameters:
     Description: If you chose yes for the Activate Scanners & Probes Protection
       parameters, enter the period (in minutes) to block applicable IP addresses
       If you chose to deactivate this protection, ignore this parameter.
+  LambdaS3Bucket:
+    Type: String
+    Description: Name of the S3 bucket where the code for all related Lambdas
+      is stored
+  LambdaS3Prefix:
+    Type: String
+    Description: S3 bucket prefix where the code for all related Lambdas
+      is stored
+    Default: ''
+  LogDestinationConfigs:
+    Type: String
+    Description: JSON structure with the the Kinesis Firehose ARN as the WAF
+      log destination and the redacted fields dict
+    Default: ''
 Conditions:
   AccessLogBucketIsDefined: !Not [ !Equals [ '', !Ref AccessLogBucket ] ]
   SqlInjectionProtectionActivated: !Equals
@@ -174,9 +200,9 @@ Conditions:
   BadBotProtectionActivated: !Equals
     - !Ref 'ActivateBadBotProtectionParam'
     - 'yes'
-  LogParserActivated: !Equals
-    - !Ref 'ActivateScansProbesProtectionParam'
-    - 'yes'
+  LogParserActivated: !And
+    - !Condition AccessLogBucketIsDefined
+    - !Equals [ 'yes', !Ref 'ActivateScansProbesProtectionParam' ]
   CreateWebACL: !Or
     - !Condition 'SqlInjectionProtectionActivated'
     - !Condition 'CrossSiteScriptingProtectionActivated'
@@ -184,6 +210,7 @@ Conditions:
     - !Condition 'ScansProbesProtectionActivated'
     - !Condition 'ReputationListsProtectionActivated'
     - !Condition 'BadBotProtectionActivated'
+  LogDestinationConfigsIsDefined: !Not [ !Equals [ '', !Ref LogDestinationConfigs ] ]
 Resources:
   WAFWhitelistSet:
     Type: AWS::WAF::IPSet
@@ -541,11 +568,8 @@ Resources:
       Handler: log-parser.lambda_handler
       Role: !GetAtt 'LambdaRoleLogParser.Arn'
       Code:
-        S3Bucket: !Join
-          - '-'
-          - - '%%BUCKET_NAME%%'
-            - !Ref 'AWS::Region'
-        S3Key: aws-waf-security-automations/v2/log-parser.zip
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Sub "${LambdaS3Prefix}log-parser.zip"
       Environment:
         Variables:
           OUTPUT_BUCKET: !Ref 'AccessLogBucket'
@@ -571,6 +595,7 @@ Resources:
       Action: lambda:*
       Principal: s3.amazonaws.com
       SourceAccount: !Ref 'AWS::AccountId'
+      SourceArn: !Sub "arn:aws:s3:::${AccessLogBucket}"
   LambdaRoleReputationListsParser:
     Type: AWS::IAM::Role
     Condition: ReputationListsProtectionActivated
@@ -657,11 +682,8 @@ Resources:
       Handler: reputation-lists-parser.handler
       Role: !GetAtt 'LambdaRoleReputationListsParser.Arn'
       Code:
-        S3Bucket: !Join
-          - '-'
-          - - '%%BUCKET_NAME%%'
-            - !Ref 'AWS::Region'
-        S3Key: aws-waf-security-automations/v3/reputation-lists-parser.zip
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Sub "${LambdaS3Prefix}reputation-lists-parser.zip"
       Runtime: nodejs6.10
       MemorySize: '128'
       Timeout: '300'
@@ -791,11 +813,8 @@ Resources:
       Handler: access-handler.lambda_handler
       Role: !GetAtt 'LambdaRoleBadBot.Arn'
       Code:
-        S3Bucket: !Join
-          - '-'
-          - - '%%BUCKET_NAME%%'
-            - !Ref 'AWS::Region'
-        S3Key: aws-waf-security-automations/v2/access-handler.zip
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Sub "${LambdaS3Prefix}access-handler.zip"
       Environment:
         Variables:
           IP_SET_ID_BAD_BOT: !Ref 'WAFBadBotSet'
@@ -927,7 +946,7 @@ Resources:
           - !Ref AWS::NoValue
         - !If
           - ReputationListsProtectionActivated
-          - PolicyName: LambdaAccess
+          - PolicyName: LambdaReputationListsInvoke
             PolicyDocument:
               Version: '2012-10-17'
               Statement:
@@ -993,6 +1012,24 @@ Resources:
                   - - 'arn:aws:waf::'
                     - !Ref 'AWS::AccountId'
                     - :ratebasedrule/*
+        - PolicyName: WAFLogging
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - waf-regional:GetLoggingConfiguration
+                  - waf-regional:PutLoggingConfiguration
+                  - waf-regional:DeleteLoggingConfiguration
+                Resource: !Sub 'arn:aws:waf-regional:${AWS::Region}:${AWS::AccountId}:webacl/${WAFWebACL}'
+              - Effect: Allow
+                Action:
+                  - sts:GetCallerIdentity
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - firehose:ListDeliveryStream
+                Resource: '*'
         - PolicyName: CloudFormationAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -1029,6 +1066,15 @@ Resources:
                     - !Ref 'AWS::Region'
                     - !Ref 'AWS::AccountId'
                     - log-group:/aws/lambda/*
+        - PolicyName: LambdaAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:GetFunction
+                Resource:
+                  - "*"
   LambdaWAFCustomResourceFunction:
     Type: AWS::Lambda::Function
     Condition: CreateWebACL
@@ -1039,11 +1085,8 @@ Resources:
       Handler: custom-resource.lambda_handler
       Role: !GetAtt 'LambdaRoleCustomResource.Arn'
       Code:
-        S3Bucket: !Join
-          - '-'
-          - - '%%BUCKET_NAME%%'
-            - !Ref 'AWS::Region'
-        S3Key: aws-waf-security-automations/v4/custom-resource.zip
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Sub "${LambdaS3Prefix}custom-resource.zip"
       Runtime: python2.7
       MemorySize: '128'
       Timeout: '300'
@@ -1061,6 +1104,10 @@ Resources:
       LambdaWAFReputationListsParserFunction: !If
         - ReputationListsProtectionActivated
         - !GetAtt 'LambdaWAFReputationListsParserFunction.Arn'
+        - !Ref 'AWS::NoValue'
+      LogDestinationConfigs: !If
+        - LogDestinationConfigsIsDefined
+        - !Ref LogDestinationConfigs
         - !Ref 'AWS::NoValue'
       WAFWhitelistSet: !Ref 'WAFWhitelistSet'
       WAFBlacklistSet: !If
@@ -1084,7 +1131,7 @@ Resources:
         - !Ref 'WAFBadBotSet'
         - !Ref 'AWS::NoValue'
       AccessLogBucket: !If
-        - AccessLogBucketIsDefined
+        - LogParserActivated
         - !Ref 'AccessLogBucket'
         - !Ref 'AWS::NoValue'
       LambdaWAFLogParserFunction: !If
