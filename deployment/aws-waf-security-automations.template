@@ -1244,7 +1244,11 @@ Outputs:
         - .amazonaws.com/
         - !Ref 'ApiGatewayBadBotStage'
     Condition: BadBotProtectionActivated
+    Export:
+      Name: !Sub "${AWS::StackName}-BadBotHoneypotEndpoint"
   WAFWebACL:
     Description: AWS WAF WebACL ID
     Value: !Ref 'WAFWebACL'
     Condition: CreateWebACL
+    Export:
+      Name: !Sub "${AWS::StackName}-WAFWebACL"
