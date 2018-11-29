@@ -195,6 +195,9 @@ Parameters:
 Conditions:
   ALBArnIsDefined: !Not [ !Equals [ '', !Ref ALBArn ] ] 
   ALBExportedArnIsDefined: !Not [ !Equals [ '', !Ref ALBExportedArn ] ]
+  CreateWebACLAssociation: !Or
+    - !Condition ALBArnIsDefined
+    - !Condition ALBExportedArnIsDefined
   AccessLogBucketIsDefined: !Not [ !Equals [ '', !Ref AccessLogBucket ] ]
   SqlInjectionProtectionActivated: !Equals
     - !Ref 'SqlInjectionProtectionParam'
@@ -466,7 +469,7 @@ Resources:
           Type: XssMatch
   WebACLAssociation:
     Type: AWS::WAFRegional::WebACLAssociation
-    Condition: CreateWebACL
+    Condition: CreateWebACLAssociation
     DependsOn:
       - WAFWebACL
     Properties:
