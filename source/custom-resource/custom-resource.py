@@ -133,24 +133,28 @@ def configure_s3_bucket(region, bucket_name, lambda_function_arn):
     elif lambda_exists:
         print("[INFO] Attempt to configure bucket %s event configuration for Lambda %s" %
                   (bucket_name, lambda_function_arn))
-        new_conf = {}
-        new_conf['LambdaFunctionConfigurations'] = []
-        if 'TopicConfigurations' in notification_conf:
-            new_conf['TopicConfigurations'] = notification_conf['TopicConfigurations']
-        if 'QueueConfigurations' in notification_conf:
-            new_conf['QueueConfigurations'] = notification_conf['QueueConfigurations']
-        if 'LambdaFunctionConfigurations' in notification_conf:
-            new_conf['LambdaFunctionConfigurations'] = notification_conf['LambdaFunctionConfigurations']
+        try:
+            new_conf = {}
+            new_conf['LambdaFunctionConfigurations'] = []
+            if 'TopicConfigurations' in notification_conf:
+                new_conf['TopicConfigurations'] = notification_conf['TopicConfigurations']
+            if 'QueueConfigurations' in notification_conf:
+                new_conf['QueueConfigurations'] = notification_conf['QueueConfigurations']
+            if 'LambdaFunctionConfigurations' in notification_conf:
+                new_conf['LambdaFunctionConfigurations'] = notification_conf['LambdaFunctionConfigurations']
 
-        new_conf['LambdaFunctionConfigurations'].append({
-            'Id': notification_id,
-            'LambdaFunctionArn': lambda_function_arn,
-            'Events': ['s3:ObjectCreated:*'],
-            'Filter': {'Key': {'FilterRules': [{'Name': 'suffix','Value': 'gz'}]}}
-        })
-        response = s3_client.put_bucket_notification_configuration(
-            Bucket=bucket_name,
-            NotificationConfiguration=new_conf)
+            new_conf['LambdaFunctionConfigurations'].append({
+                'Id': notification_id,
+                'LambdaFunctionArn': lambda_function_arn,
+                'Events': ['s3:ObjectCreated:*'],
+                'Filter': {'Key': {'FilterRules': [{'Name': 'suffix','Value': 'gz'}]}}
+            })
+            response = s3_client.put_bucket_notification_configuration(
+                Bucket=bucket_name,
+                NotificationConfiguration=new_conf)
+        except Exception, e:
+            print(e)
+            print("[ERROR] Error adding S3 Bucket lambda event")
 
 def remove_s3_bucket_lambda_event(bucket_name, lambda_function_arn):
     s3 = boto3.resource('s3')
@@ -369,8 +373,8 @@ def create_stack(stack_name, resource_properties):
     for attempt in range(API_CALL_NUM_RETRIES):
         try:
             response = waf.get_web_acl(WebACLId=resource_properties['WAFWebACL'])
-            web_acl_arn = response['WebACL']['WebACLArn']
             print('[DEBUG] response is %s' % response)
+            web_acl_arn = response['WebACL'].get('WebACLArn')
             current_rules = [r['RuleId'].encode('utf8') for r in response['WebACL']['Rules']]
 
 
@@ -564,7 +568,7 @@ def delete_stack(stack_name, resource_properties, force_delete):
             response = waf.get_web_acl(WebACLId=resource_properties['WAFWebACL'])
 
             if "LogDestinationConfigs" in resource_properties:
-                web_acl_arn = response['WebACL']['WebACLArn']
+                web_acl_arn = response['WebACL'].get('WebACLArn')
                 remove_logging_configurations(web_acl_arn)
 
             for rule in response['WebACL']['Rules']:
