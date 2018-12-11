@@ -983,6 +983,7 @@ Resources:
                     - s3:GetObject
                     - s3:ListBucket
                     - s3:PutBucketNotification
+                    - s3:PutBucketLogging
                   Resource: !Sub 'arn:aws:s3:::${AccessLogBucket}'
           - !Ref AWS::NoValue
         - !If
